@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <base target="_top">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>moni:co - CM Player</title>
+    <style>
+      /* --- 既存のスタイル --- */
+      :root {
+        --primary-color: #2563eb; 
+        --accent-color: #ef4444; 
+        --bg-color: #f3f4f6;
+        --card-bg: #ffffff;
+        --text-main: #1f2937;
+        --text-sub: #6b7280;
+        --border-radius: 12px;
+        --input-height: 48px;
+      }
+      * { box-sizing: border-box; }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background-color: var(--bg-color);
+        color: var(--text-main);
+        margin: 0; padding: 0; min-height: 100vh;
+        display: flex; flex-direction: column;
+      }
+      #loading-screen {
+        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+        background: var(--bg-color);
+        display: flex; flex-direction: column; justify-content: center; align-items: center;
+        z-index: 9999; transition: opacity 0.5s;
+      }
+      .loader {
+        border: 4px solid #d1d5db; border-top: 4px solid var(--primary-color);
+        border-radius: 50%; width: 40px; height: 40px;
+        animation: spin 1s linear infinite; margin-bottom: 15px;
+      }
+      @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+      header {
+        background: var(--card-bg); padding: 12px 20px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        display: flex; justify-content: space-between; align-items: center;
+        position: sticky; top: 0; z-index: 100;
+      }
+      h1 { font-size: 1.1rem; margin: 0; color: var(--primary-color); font-weight: 800; }
+      main {
+        flex: 1; padding: 15px; display: flex; flex-direction: column; gap: 20px;
+        max-width: 800px; margin: 0 auto; width: 100%; padding-bottom: 40px; 
+      }
+      .card {
+        background: var(--card-bg); border-radius: var(--border-radius);
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        padding: 20px; display: flex; flex-direction: column; gap: 20px; 
+      }
+      .video-wrapper {
+        position: relative; background: #000; border-radius: 8px;
+        overflow: hidden; aspect-ratio: 9 / 16; max-width: calc(60vh * (9 / 16));
+        width: 100%; margin: 0 auto; box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+      }
+      video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+      .gauge-container { width: 100%; }
+      .gauge-label { display: flex; justify-content: space-between; font-size: 0.85rem; color: var(--text-sub); margin-bottom: 6px; }
+      .gauge-bg { height: 12px; background: #e5e7eb; border-radius: 6px; overflow: hidden; position: relative; }
+      .gauge-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #10b981, #f59e0b, #ef4444); transition: width 0.3s ease; }
+      .threshold-marker { position: absolute; top: 0; bottom: 0; width: 2px; background: #000; left: 50%; opacity: 0.3; }
+      .form-grid { display: grid; grid-template-columns: 1fr; gap: 15px; }
+      @media (min-width: 600px) { .form-grid { grid-template-columns: 1fr 1fr; } .full-width { grid-column: span 2; } }
+      .input-group label { display: block; font-size: 0.8rem; font-weight: 600; color: var(--text-sub); margin-bottom: 6px; }
+      .input-group input, .input-group select { width: 100%; height: var(--input-height); padding: 0 12px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 1rem; background: #f9fafb; }
+      .action-buttons { display: flex; flex-direction: column; gap: 12px; margin-top: 10px; width: 100%; }
+      button { width: 100%; min-height: 54px; border: none; border-radius: 8px; font-weight: 700; font-size: 1rem; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1); transition: transform 0.1s; }
+      button:active { transform: scale(0.98); }
+      #cameraButton { background: #4b5563; color: white; } 
+      #startButton { background: var(--primary-color); color: white; }
+      #stopButton { background: var(--accent-color); color: white; }
+      #testButton { background: #fff; border: 2px solid #e5e7eb; color: var(--text-main); }
+      .status-box { background: #1e293b; color: #e2e8f0; padding: 15px; border-radius: 8px; font-family: monospace; font-size: 0.85rem; min-height: 60px; display: flex; align-items: center; border-left: 4px solid var(--primary-color); line-height: 1.4; transition: background 0.3s; }
+      .status-error { background: #7f1d1d !important; color: #fee2e2 !important; border-left-color: #ef4444 !important; font-weight: bold; }
+      
+      /* --- ★追加: CM再生用オーバーレイ --- */
+      #cmOverlay {
+        position: fixed;
+        top: 0; left: 0; width: 100%; height: 100%;
+        background: rgba(0, 0, 0, 0.9);
+        display: none; /* 初期状態は非表示 */
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        z-index: 10000;
+      }
+      #cmVideo {
+        width: 90%; 
+        max-width: 800px;
+        aspect-ratio: 16 / 9; /* ★CM動画と赤枠を16:9に固定 */
+        object-fit: contain;   /* 動画が枠内に綺麗に収まるようにする */
+        border: 4px solid var(--accent-color); /* これがCMの周りの赤枠になります */
+        border-radius: 8px;
+        transform: none; /* カメラのように左右反転させない */
+      }
+      /* --- ★追加: ゲージ表示モード切替用のスタイル --- */
+      /* 「数値のみ」モード */
+      .mode-number .gauge-bg {
+        display: none; /* ゲージのバーを消す */
+      }
+      .mode-number .gauge-label {
+        font-size: 0.75rem; /* 文字を小さく */
+        justify-content: flex-end; /* 右側に寄せる */
+        opacity: 0.7; /* 少し薄くして目立たなくする */
+      }
+      /* 「非表示」モード */
+      .mode-hidden {
+        display: none !important; /* 完全に隠す */
+      }
+    </style>
+  </head>
+  <body>
+
+    <div id="loading-screen">
+      <div class="loader"></div>
+      <div>システム起動中...</div>
+    </div>
+    
+    <div id="cmOverlay">
+      <video id="cmVideo" src="" playsinline></video>
+      <p id="cmMessage" style="color:white; margin-top:15px; font-weight:bold;">集中力が低下しています！CMを見てリフレッシュしましょう。</p>
+      <button id="manualPlayBtn" style="display: none; margin-top: 20px; max-width: 200px; background: var(--accent-color); color: white;">
+        ▶ 手動でCMを再生
+      </button>
+    </div>
+
+    <header>
+      <h1>moni:co</h1>
+    </header>
+
+    <main>
+      <div class="card">
+        <div class="video-wrapper" id="videoWrapper">
+          <video id="video" autoplay playsinline muted></video>
+        </div>
+
+        <div class="gauge-container">
+          <div class="gauge-label">
+            <span>Concentration Loss (集中低下度)</span>
+            <span id="scoreValue">0%</span>
+          </div>
+          <div class="gauge-bg">
+            <div class="threshold-marker"></div>
+            <div class="gauge-fill" id="gaugeFill"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="form-grid">
+          <div class="input-group full-width">
+            <label for="videoSource">使用カメラ</label>
+            <select id="videoSource"></select>
+          </div>
+
+          <div class="input-group">
+            <label for="toleranceInput">猶予時間 (Seconds to Trigger)</label>
+            <input type="number" id="toleranceInput" value="10" min="5">
+          </div>
+          
+          <div class="input-group">
+            <label for="displayMode">低下ゲージの表示</label>
+            <select id="displayMode">
+              <option value="gauge">ゲージ＋数値</option>
+              <option value="number">数値のみ</option>
+              <option value="hidden">非表示</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="action-buttons">
+          <button id="cameraButton">📸 カメラ起動・準備 (Check Camera)</button>           
+          <button id="startButton" style="display: none;">🔴 監視開始 (Start)</button>           
+          <button id="stopButton" style="display: none;">⬛ 監視停止 (Stop)</button>
+          <button id="testButton">📺 CM手動テスト (Manual Test)</button>
+        </div>
+      </div>
+
+      <div class="status-box" id="status">
+        Ready. カメラを選択してStartを押してください。
+      </div>
+
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.18.0"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection"></script>
+
+    <script>
+      window.onload = () => {
+         const loader = document.getElementById("loading-screen");
+         if(loader) { loader.style.opacity = "0"; setTimeout(() => loader.style.display = "none", 500); }
+      };
+
+      const gaugeFill = document.getElementById('gaugeFill');
+      const scoreValue = document.getElementById('scoreValue');
+      const videoWrapper = document.getElementById('videoWrapper');
+
+      function updateGauge(score) {
+          const percentage = Math.min(Math.max(score, 0), 100);
+          gaugeFill.style.width = `${percentage}%`;
+          scoreValue.textContent = `${percentage.toFixed(1)}%`;
+          
+          if (percentage > LAPSE_THRESHOLD) {
+              videoWrapper.style.border = "3px solid var(--accent-color)";
+          } else {
+              videoWrapper.style.border = "none";
+          }
+      }
+
+      function showError(msg) {
+          status.textContent = "⛔ " + msg; status.classList.add("status-error"); 
+      }
+      function clearError() { status.classList.remove("status-error"); }
+
+      // ★追加: 再生したい動画（CM）のURLリスト
+      // GitHub Pagesにアップロードした動画のURLを好きなだけ並べてください
+      const CM_VIDEO_LIST = [
+          "https://izk-404.github.io/revised_monico_CM/cm_,matsuoka.mov",
+          "https://izk-404.github.io/revised_monico_CM/cm_AIgramma.mov",
+          "https://izk-404.github.io/revised_monico_CM/cm_ASMR.mp4",
+          "https://izk-404.github.io/revised_monico_CM/cm_CM.MP4",
+          "https://izk-404.github.io/revised_monico_CM/cm_animal.mov",
+          "https://izk-404.github.io/revised_monico_CM/cm_cool.mp4",
+          "https://izk-404.github.io/revised_monico_CM/cm_gyag.mov",
+          "https://izk-404.github.io/revised_monico_CM/cm_kono.mov",
+          "https://izk-404.github.io/revised_monico_CM/cm_takagishi.mov",
+          "https://izk-404.github.io/revised_monico_CM/cm_view.MP4"
+      ];
+
+      const status = document.getElementById("status");
+      const video = document.getElementById("video");
+      const cameraButton = document.getElementById("cameraButton");
+      const startButton = document.getElementById("startButton");
+      const stopButton = document.getElementById("stopButton");
+      const testButton = document.getElementById("testButton");
+      const videoSource = document.getElementById("videoSource");
+      const toleranceInput = document.getElementById("toleranceInput");
+
+      // ★追加: 表示モード切替の処理
+      const displayMode = document.getElementById("displayMode");
+      const gaugeContainer = document.querySelector(".gauge-container");
+
+      displayMode.addEventListener("change", (e) => {
+          // 一旦クラスをリセットして基本状態にする
+          gaugeContainer.className = "gauge-container";
+          
+          // 選択された値に応じてクラスを追加
+          if (e.target.value === "number") {
+              gaugeContainer.classList.add("mode-number");
+          } else if (e.target.value === "hidden") {
+              gaugeContainer.classList.add("mode-hidden");
+          }
+      });
+
+      // CM Player elements
+      const cmOverlay = document.getElementById("cmOverlay");
+      const cmVideo = document.getElementById("cmVideo");
+      let isPlayingCM = false;
+
+      let detector, objectDetector; 
+      let selectedCameraId, localAnalysisIntervalId = null; 
+      const LOCAL_LOOP_MS = 100; 
+
+      let isCalibrating = false;
+      const CALIBRATION_DURATION_MS = 15000; 
+      let calibrationStartTime = 0;
+      let calibrationData = { ear: [], pitch: [], yaw: [] };
+      let baseline = { earMean: 0, earStd: 0, pitchMean: 0, pitchStd: 0, yawMean: 0, yawStd: 0 };
+
+      let lapseScore = 0;         
+      const LAPSE_THRESHOLD = 50; 
+      let lapseStartTime = null;  
+      
+      let lastPitch=0, lastYaw=0, lastSeenTime=0;
+      let lastAlertTime = 0;
+      const ALERT_COOLDOWN_MS = 60 * 1000; 
+      const ADAPTATION_RATE = 0.001; 
+      const Z_THRESHOLD_PITCH = 2.5; 
+      const Z_THRESHOLD_EAR = 1.5;   
+
+      // ★ここに最新のGAS Web App URLを入力してください
+      const FIXED_GAS_URL = "https://script.google.com/macros/s/AKfycbwlJ8NJYIYCI7ugSsJZm5LjWF_hcFHDJELlGkiG3-YV1Y7lPQDmIqJ_8vZtOxxev9DItg/exec";
+
+      cameraButton.addEventListener("click", prepareSystem); 
+      startButton.addEventListener("click", startMonitoring); 
+      stopButton.addEventListener("click", stopMonitoring); 
+      testButton.addEventListener("click", () => triggerCM("手動テスト")); 
+      
+      videoSource.addEventListener("change", async (e) => { 
+          selectedCameraId = e.target.value; 
+          if (video.srcObject) { await startCameraStream(); }
+      });
+
+      loadDevices();
+
+      async function loadDevices() {
+          try {
+              await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+              const devices = await navigator.mediaDevices.enumerateDevices();
+              devices.forEach(device => {
+                  if (device.kind === 'videoinput') {
+                      const option = document.createElement('option');
+                      option.value = device.deviceId;
+                      option.text = device.label || `Camera ${videoSource.length + 1}`;
+                      videoSource.appendChild(option);
+                  }
+              });
+              if (videoSource.options.length > 0) selectedCameraId = videoSource.value;
+          } catch (err) { showError("カメラアクセスエラー: " + err.message); }
+      }
+
+      async function prepareSystem() {
+          clearError(); cameraButton.disabled = true;
+          status.textContent = "システム起動中 (AIモデル読み込み)...";
+
+          try {
+              await startCameraStream();
+              const model = faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh;
+              detector = await faceLandmarksDetection.createDetector(model, {
+                  runtime: 'mediapipe', solutionPath: 'https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh',
+              });
+              objectDetector = await cocoSsd.load();
+              status.textContent = "準備完了！良い姿勢で「監視開始」を押してください。";
+              cameraButton.style.display = 'none'; startButton.style.display = 'block'; 
+          } catch(err){ showError("起動エラー: " + err.message); cameraButton.disabled = false; }
+      }
+
+      async function startCameraStream(){
+          if (video.srcObject) { video.srcObject.getTracks().forEach(t => t.stop()); video.srcObject = null; }
+          const stream = await navigator.mediaDevices.getUserMedia({
+              video: { deviceId: selectedCameraId ? { exact: selectedCameraId } : undefined, width: { ideal: 720 }, height: { ideal: 1280 } }
+          });
+          video.srcObject = stream;
+      }
+
+      function startMonitoring() {
+          clearError(); 
+          // ★「名前と作業目的を入力してください！」のチェックを丸ごと削除しました
+          // 事前アンロックのために、まず1本目の動画を設定しておく
+          if (CM_VIDEO_LIST.length > 0) {
+              cmVideo.src = CM_VIDEO_LIST[0];
+          }
+          // ...以下略
+
+          cmVideo.muted = true; 
+          cmVideo.play().then(() => {
+              cmVideo.pause();
+              cmVideo.currentTime = 0;
+              cmVideo.muted = false; 
+          }).catch(err => console.log("事前アンロック保留:", err));
+
+          isCalibrating = true; calibrationStartTime = Date.now();
+          calibrationData = { ear: [], pitch: [], yaw: [] }; lapseScore = 0; updateGauge(0);
+          
+          if (localAnalysisIntervalId) clearInterval(localAnalysisIntervalId);
+          localAnalysisIntervalId = setInterval(runLocalAnalysis, LOCAL_LOOP_MS);
+
+          startButton.style.display = 'none'; stopButton.style.display = 'block';
+      }
+      
+      function stopMonitoring() {
+          if (localAnalysisIntervalId) { clearInterval(localAnalysisIntervalId); localAnalysisIntervalId = null; }
+          videoWrapper.style.border = "none"; updateGauge(0);
+          stopButton.style.display = 'none'; startButton.style.display = 'block'; 
+          status.textContent = "監視を停止しました。";
+      }
+
+      // ★変更箇所: 画像送信・AI通信の代わりにCMを再生する関数
+      function triggerCM(triggerReason = "集中力の低下") {
+          if (isPlayingCM || CM_VIDEO_LIST.length === 0) return; 
+          isPlayingCM = true;
+
+          // ★追加: リストの中からランダムに1つ動画URLを選ぶ
+          const randomIndex = Math.floor(Math.random() * CM_VIDEO_LIST.length);
+          const selectedVideoUrl = CM_VIDEO_LIST[randomIndex];
+          
+          // 動画を切り替えて読み込む
+          cmVideo.src = selectedVideoUrl;
+          cmVideo.load(); 
+
+          // GASへログ送信
+          fetch(FIXED_GAS_URL, {
+            method: "POST",
+            mode: "cors",
+            body: JSON.stringify({
+              reason: triggerReason
+            })
+          }).catch(err => console.error("ログ送信エラー:", err));
+
+          // CM表示
+          cmOverlay.style.display = "flex";
+          const cmMessage = document.getElementById("cmMessage");
+          const manualPlayBtn = document.getElementById("manualPlayBtn");
+          
+          cmMessage.textContent = `⚠️ 検知: ${triggerReason}。CMを再生します！`;
+          manualPlayBtn.style.display = "none";
+          
+          cmVideo.currentTime = 0;
+          
+          cmVideo.play().catch(e => {
+            console.warn("自動再生失敗:", e);
+            cmMessage.textContent = "⚠️ 自動再生がブロックされました、または読み込み中です。ボタンを押してください。";
+            manualPlayBtn.style.display = "block";
+            
+            manualPlayBtn.onclick = () => {
+                manualPlayBtn.style.display = "none";
+                cmMessage.textContent = "CM再生中...";
+                
+                cmVideo.play().catch(err => {
+                    console.error("手動再生エラー:", err);
+                    cmMessage.textContent = "⛔ 動画の読み込みに失敗しました。URLを確認してください。";
+                    setTimeout(() => {
+                        cmOverlay.style.display = "none";
+                        isPlayingCM = false;
+                        lastAlertTime = Date.now();
+                        lapseScore = 0;
+                        lapseStartTime = null;
+                        status.textContent = "動画エラーのため監視に戻りました。";
+                    }, 3000);
+                });
+            };
+          });
+      }
+
+      // CM再生終了時のイベント
+      cmVideo.addEventListener('ended', () => {
+          cmOverlay.style.display = "none";
+          isPlayingCM = false;
+          lastAlertTime = Date.now(); // クールダウン開始
+          lapseScore = 0; // スコアリセット
+          lapseStartTime = null;
+          status.textContent = "CM終了。作業に集中しましょう！";
+      });
+
+      function faceAngles(keypoints){
+          const nose = keypoints[1], leftEye = keypoints[33], rightEye = keypoints[263];
+          const eyeX = (leftEye.x + rightEye.x) / 2, eyeY = (leftEye.y + rightEye.y) / 2, eyeZ = (leftEye.z + rightEye.z) / 2;
+          return {
+              pitch: Math.atan2(nose.y - eyeY, nose.z - eyeZ) * (180 / Math.PI),
+              yaw: Math.atan2(nose.x - eyeX, nose.z - eyeZ) * (180 / Math.PI)
+          };
+      }
+
+      async function runLocalAnalysis() {
+          if (!detector || !video || !objectDetector || isPlayingCM) return; // CM再生中は解析を止める
+
+          try {
+              const objects = await objectDetector.detect(video);
+              const isPhoneDetected = objects.some(obj => obj.class === 'cell phone' || obj.class === 'mobile phone');
+              const faces = await detector.estimateFaces(video);
+              const now = Date.now();
+
+              if (faces.length > 0) {
+                  const keypoints = faces[0].keypoints;
+                  const leftEAR = calculateEAR(keypoints, [33, 160, 158, 133, 153, 144]);
+                  const rightEAR = calculateEAR(keypoints, [362, 385, 387, 263, 373, 380]);
+                  const avgEAR = (leftEAR + rightEAR) / 2.0;
+                  const { pitch, yaw } = faceAngles(keypoints);
+                  lastPitch = pitch; lastYaw = yaw; lastSeenTime = now;
+
+                  if (isCalibrating) {
+                      calibrationData.ear.push(avgEAR); calibrationData.pitch.push(pitch); calibrationData.yaw.push(yaw);
+                      const elapsed = now - calibrationStartTime;
+                      status.textContent = `キャリブレーション中... (残り${Math.ceil((CALIBRATION_DURATION_MS - elapsed) / 1000)}秒)`;
+                      if (elapsed > CALIBRATION_DURATION_MS) finishCalibration();
+                  } else {
+                      checkConcentration(pitch, yaw, avgEAR, isPhoneDetected);
+                  }
+              } else {
+                  if (!isCalibrating && isPhoneDetected) checkConcentration(0, 0, 0.3, true);
+                  else if (now - lastSeenTime < 5000) { lapseScore += 0.5; updateGauge(lapseScore); status.textContent = "顔認識ロスト (スコア上昇中)"; }
+              }
+          } catch (e) { console.error("Loop Error:", e); }
+      }
+
+      function finishCalibration() {
+          if (calibrationData.ear.length < 10) { baseline = { earMean: 0.3, earStd: 0.05, pitchMean: 0, pitchStd: 10, yawMean: 0, yawStd: 10 }; } 
+          else {
+              baseline.earMean = calculateStats(calibrationData.ear).mean; baseline.earStd = calculateStats(calibrationData.ear).std;
+              baseline.pitchMean = calculateStats(calibrationData.pitch).mean; baseline.pitchStd = calculateStats(calibrationData.pitch).std;
+              baseline.yawMean = calculateStats(calibrationData.yaw).mean; baseline.yawStd = calculateStats(calibrationData.yaw).std;
+          }
+          isCalibrating = false; status.textContent = "学習完了。監視を開始します。";
+      }
+
+      function checkConcentration(pitch, yaw, avgEAR, isPhoneDetected) {
+          const pitchZ = calculateZScore(pitch, baseline.pitchMean, baseline.pitchStd, 5.0); 
+          const yawZ = Math.abs(yaw - baseline.yawMean) / Math.max(baseline.yawStd, 5.0);
+          const earZ = (baseline.earMean - avgEAR) / Math.max(baseline.earStd, 0.02); 
+
+          let addedScore = 0; let reasons = [];
+          if (isPhoneDetected) { addedScore += 50.0; reasons.push("スマホ検知"); }
+          if (pitchZ > Z_THRESHOLD_PITCH) { addedScore += 2.0; reasons.push("姿勢崩れ"); }
+          if (yawZ > Z_THRESHOLD_PITCH) { addedScore += 1.5; reasons.push("よそ見"); }
+          if (earZ > Z_THRESHOLD_EAR || avgEAR < 0.12) { addedScore += 5.0; reasons.push("目閉じ"); }
+
+          if (addedScore > 0) lapseScore = Math.min(100, lapseScore + addedScore);
+          else lapseScore = Math.max(0, lapseScore - 5.0);
+
+          updateGauge(lapseScore);
+
+          if (!isPhoneDetected && lapseScore < 30) {
+              baseline.pitchMean = baseline.pitchMean * (1 - ADAPTATION_RATE) + pitch * ADAPTATION_RATE;
+              baseline.yawMean = baseline.yawMean * (1 - ADAPTATION_RATE) + yaw * ADAPTATION_RATE;
+              baseline.earMean = baseline.earMean * (1 - ADAPTATION_RATE) + avgEAR * ADAPTATION_RATE;
+          }
+
+          const now = Date.now();
+          let msg = `スコア: ${lapseScore.toFixed(1)}` + (reasons.length > 0 ? ` ⚠️検知: ${reasons.join(",")}` : "");
+
+          if (lapseScore > LAPSE_THRESHOLD) {
+              if (lapseStartTime === null) lapseStartTime = now;
+              const duration = now - lapseStartTime;
+              
+              if (duration > parseInt(toleranceInput.value) * 1000) {
+                  if (now - lastAlertTime < ALERT_COOLDOWN_MS) {
+                      msg += " [クールダウン中]";
+                  } else {
+                      triggerCM(reasons.length > 0 ? reasons.join("、") : "集中力の低下");
+                      return;
+                  }
+              }
+          } else {
+              lapseStartTime = null;
+          }
+          status.textContent = msg;
+      }
+
+      function getDistance(p1, p2) { return Math.sqrt(Math.pow(p1.x-p2.x,2)+Math.pow(p1.y-p2.y,2)); }
+      function calculateEAR(keypoints, indices) { const p = indices.map(i => keypoints[i]); return (getDistance(p[1],p[5])+getDistance(p[2],p[4])) / (2.0*getDistance(p[0],p[3])); }
+      function calculateStats(arr) { const n = arr.length; if(n===0)return{mean:0,std:0}; const mean = arr.reduce((a,b)=>a+b)/n; const v = arr.reduce((a,b)=>a+Math.pow(b-mean,2),0)/n; return {mean:mean, std:Math.sqrt(v)}; }
+      function calculateZScore(val, mean, std, minStd = 0.1) { return (val - mean) / Math.max(std, minStd); }
+    </script>
+  </body>
+</html>
